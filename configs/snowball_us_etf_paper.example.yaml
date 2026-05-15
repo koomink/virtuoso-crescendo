@@ -1,0 +1,242 @@
+mode: paper
+
+portfolio:
+  base_currency: USD
+  initial_cash: 10000
+  allowed_symbols:
+    - CASH_USD
+    - SPY
+    - SCZ
+    - QQQ
+    - SCHD
+    - BIL
+    - TLT
+    - PDBC
+    - TIP
+    - EFA
+    - EEM
+    - AGG
+    - IEF
+    - LQD
+
+universe:
+  instruments:
+    - symbol: CASH_USD
+      asset_type: cash
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: USD
+      exchange_code: AMEX
+      quantity_step: 0.01
+      price_tick: 0.01
+      min_order_quantity: 0.01
+      min_order_notional: 0
+    - symbol: SPY
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: SPY
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: SCZ
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: SCZ
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: QQQ
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: QQQ
+      exchange_code: NASD
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: SCHD
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: SCHD
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: BIL
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: BIL
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: TLT
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: TLT
+      exchange_code: NASD
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: PDBC
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: PDBC
+      exchange_code: NASD
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: TIP
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: TIP
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: EFA
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: EFA
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: EEM
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: EEM
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: AGG
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: AGG
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: IEF
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: IEF
+      exchange_code: NASD
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+    - symbol: LQD
+      asset_type: etf
+      region: US
+      currency: USD
+      broker: kis
+      broker_product: kis_overseas_stock
+      broker_symbol: LQD
+      exchange_code: AMEX
+      quantity_step: 1
+      price_tick: 0.01
+      min_order_quantity: 1
+      min_order_notional: 1
+
+strategies:
+  - id: snowball
+    enabled: true
+    mode: paper
+    weight: 1.0
+    entrypoint: "snowball.strategy:SnowballStrategy"
+    config:
+      selected_strategies: [dga, accelerated_dual_momentum, gtt_ue, baa_a]
+      strategy_weights:
+        dga: 0.25
+        accelerated_dual_momentum: 0.25
+        gtt_ue: 0.25
+        baa_a: 0.25
+      ticker_overrides: {}
+      slot_overrides: {}
+
+datahub:
+  providers:
+    - name: yahoo
+      provider: yahoo
+      data_types: [price, ohlcv, fundamental]
+      symbols: [SPY, SCZ, QQQ, SCHD, BIL, TLT, PDBC, TIP, EFA, EEM, AGG, IEF, LQD]
+      stale_after_seconds: 604800
+    - name: fred
+      provider: fred
+      data_types: [macro]
+      symbols: [UNRATE, T10Y3M]
+      api_key_env: FRED_API_KEY
+      stale_after_seconds: 7776000
+
+execution:
+  engine: paper
+  order_generation_mode: target_rebalance
+
+risk:
+  max_single_asset_weight: 1.0
+  min_cash_weight: 0.0
+
+state:
+  sqlite_path: var/snowball_us_etf_paper_state.db
+
+audit:
+  jsonl_path: var/snowball_us_etf_paper_audit.jsonl
+
+approval:
+  enabled: false
+  provider: console
+  require_approval: false
+  default_decision: approved
+  timeout_seconds: 300
