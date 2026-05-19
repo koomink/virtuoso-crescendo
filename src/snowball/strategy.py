@@ -70,11 +70,11 @@ class SnowballStrategy(BaseStrategyPlugin):
             name="Snowball",
             version=STRATEGY_VERSION,
             description="Dynamic asset allocation strategy collection for Maestro.",
-            supported_modes=["paper"],
+            supported_modes=["paper", "live_approval"],
             supported_asset_types=["cash", "etf", "us_etf"],
             result_type="target_allocation",
             requires_data=["ohlcv", "fundamental", "macro"],
-            can_run_live=False,
+            can_run_live=True,
             allow_direct_external_data_calls=False,
             estimated_runtime_seconds=10,
         )
@@ -141,11 +141,13 @@ class SnowballStrategy(BaseStrategyPlugin):
                 combined[symbol] = combined.get(symbol, 0.0) + allocation * weights[strategy_id]
 
         combined = self._fill_cash(combined, self._cash_symbol(context))
+        sleeve = context.config.get("sleeve")
         return TargetAllocationResult(
             strategy_id=context.strategy_id,
             strategy_version=STRATEGY_VERSION,
             timestamp=context.timestamp,
-            allocations=combined,
+            allocations={} if sleeve else combined,
+            allocation_sleeves={str(sleeve): combined} if sleeve else {},
             strategy_books=books,
             confidence=1.0,
             time_horizon="monthly",

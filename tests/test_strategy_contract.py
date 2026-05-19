@@ -114,6 +114,42 @@ def test_snowball_runs_four_default_strategies_with_books():
     assert round(sum(book.target_weight for book in result.strategy_books), 10) == 1.0
 
 
+def test_snowball_can_emit_usd_sleeve_for_live_approval():
+    strategy = SnowballStrategy()
+    manifest = strategy.manifest()
+    context = StrategyContext(
+        cycle_id="test",
+        timestamp=datetime.now(UTC),
+        run_mode="live_approval",
+        strategy_id="snowball",
+        config={
+            "sleeve": "USD",
+            "selected_strategies": ["accelerated_dual_momentum"],
+        },
+    )
+    data = {
+        "SPY": _symbol_data("SPY", [100, 101, 102, 103, 104, 105, 106]),
+        "SCZ": _symbol_data("SCZ", [100, 102, 104, 106, 108, 110, 112]),
+        "TLT": _symbol_data("TLT", [100, 100, 100, 100, 100, 100, 101]),
+        "TIP": _symbol_data("TIP", [100, 100, 100, 100, 100, 100, 100]),
+    }
+
+    result = strategy.run(
+        DataBundle(
+            requests=strategy.build_data_requests(context),
+            data=data,
+            generated_at=datetime.now(UTC),
+            source="test",
+        ),
+        context,
+    )
+
+    assert "live_approval" in manifest.supported_modes
+    assert manifest.can_run_live is True
+    assert result.allocations == {}
+    assert result.allocation_sleeves == {"USD": {"SCZ": 1.0}}
+
+
 def test_dga_treats_dividend_yield_above_one_as_percent_value():
     strategy = SnowballStrategy()
     context = StrategyContext(
