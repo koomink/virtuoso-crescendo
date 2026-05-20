@@ -387,3 +387,14 @@ class SnowballStrategy(BaseStrategyPlugin):
         if not isinstance(observations, list) or len(observations) < 13:
             raise ValueError(f"Not enough macro observations for {symbol}: need 13")
         return [float(observation["value"]) for observation in observations]
+
+
+class SnowballUSStrategy(SnowballStrategy):
+    def manifest(self) -> StrategyManifest:
+        return super().manifest().model_copy(
+            update={
+                "strategy_id": "snowball_us",
+                "name": "Snowball US",
+                "description": "US-market Snowball dynamic asset allocation profile.",
+            }
+        )
