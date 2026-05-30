@@ -1,4 +1,6 @@
+from calendar import monthrange
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from maestro.sdk import (
     BaseStrategyPlugin,
@@ -14,6 +16,7 @@ STRATEGY_ID = "snowball"
 STRATEGY_VERSION = "0.1.0"
 CASH_SYMBOL = "CASH_USD"
 SELECTED_STRATEGIES = ["dga", "accelerated_dual_momentum", "gtt_ue", "baa_a"]
+OHLCV_LOOKBACK_DAYS = 420
 
 
 @dataclass(frozen=True)
@@ -55,7 +58,7 @@ DEFAULT_SPECS = {
             "offensive": ["QQQ", "EFA", "EEM", "AGG"],
             "defensive": ["AGG", "BIL", "IEF", "TLT", "TIP", "LQD", "PDBC"],
             "canary": ["SPY", "EEM", "EFA", "AGG"],
-            "cash": [CASH_SYMBOL],
+            "cash": ["BIL"],
         },
     ),
 }
@@ -93,8 +96,8 @@ class SnowballStrategy(BaseStrategyPlugin):
                         asset_type="etf" if data_type != "macro" else "stock",
                         data_type=data_type,
                         intended_use="tradable" if role != "macro" else "research",
-                        timeframe="1mo" if data_type == "ohlcv" else None,
-                        lookback=380 if data_type == "ohlcv" else 13,
+                        timeframe="1d" if data_type == "ohlcv" else None,
+                        lookback=OHLCV_LOOKBACK_DAYS if data_type == "ohlcv" else 13,
                     )
             if strategy_id == "dga":
                 dividend_symbol = universe[strategy_id]["macro"][0]
@@ -105,6 +108,7 @@ class SnowballStrategy(BaseStrategyPlugin):
                         data_type="fundamental",
                         intended_use="research",
                         fields=["dividend_yield"],
+                        as_of=context.timestamp,
                     )
         return list(requests.values())
 
@@ -127,6 +131,7 @@ class SnowballStrategy(BaseStrategyPlugin):
                 strategy_id,
                 universe[strategy_id],
                 data_bundle,
+                context.timestamp,
             )
             book = StrategyBookAllocation(
                 book_id=strategy_id,
@@ -164,40 +169,47 @@ class SnowballStrategy(BaseStrategyPlugin):
         strategy_id: str,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
+        as_of: datetime,
     ) -> tuple[dict[str, float], str]:
         if strategy_id == "dga":
-            return self._run_dga(universe, data_bundle)
+            return self._run_dga(universe, data_bundle, as_of)
         if strategy_id == "accelerated_dual_momentum":
-            return self._run_adm(universe, data_bundle)
+            return self._run_adm(universe, data_bundle, as_of)
         if strategy_id == "gtt_ue":
-            return self._run_gtt_ue(universe, data_bundle)
+            return self._run_gtt_ue(universe, data_bundle, as_of)
         if strategy_id == "baa_a":
-            return self._run_baa_a(universe, data_bundle)
+            return self._run_baa_a(universe, data_bundle, as_of)
         raise ValueError(f"Unsupported Snowball strategy: {strategy_id}")
 
     def _run_dga(
         self,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
+        as_of: datetime,
     ) -> tuple[dict[str, float], str]:
         canary = universe["canary"][0]
         dividend_symbol, spread_symbol = universe["macro"]
         risk_off = (
-            self._latest_close(canary, data_bundle) < self._sma(canary, data_bundle, 12)
+            self._latest_close(canary, data_bundle, as_of)
+            < self._sma(canary, data_bundle, 12, as_of)
             or self._dividend_yield(dividend_symbol, data_bundle) < 0.016
             or self._latest_macro(spread_symbol, data_bundle) < -0.5
         )
         if not risk_off:
             winner = max(
                 universe["offensive"],
-                key=lambda symbol: self._average_return(symbol, data_bundle, [1, 3, 6, 9, 12]),
+                key=lambda symbol: self._average_return(
+                    symbol, data_bundle, [1, 3, 6, 9, 12], as_of
+                ),
             )
             return {winner: 1.0}, f"DGA selected offensive asset {winner}."
         defensive = max(
             universe["defensive"],
-            key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 6),
+            key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 6, as_of),
         )
-        if self._latest_close(defensive, data_bundle) < self._sma(defensive, data_bundle, 6):
+        if self._latest_close(defensive, data_bundle, as_of) < self._sma(
+            defensive, data_bundle, 6, as_of
+        ):
             return {universe["cash"][0]: 1.0}, "DGA risk-off signal selected cash."
         return {defensive: 1.0}, f"DGA risk-off signal selected defensive asset {defensive}."
 
@@ -205,16 +217,17 @@ class SnowballStrategy(BaseStrategyPlugin):
         self,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
+        as_of: datetime,
     ) -> tuple[dict[str, float], str]:
         winner = max(
             universe["offensive"],
-            key=lambda symbol: self._average_return(symbol, data_bundle, [1, 3, 6]),
+            key=lambda symbol: self._average_return(symbol, data_bundle, [1, 3, 6], as_of),
         )
-        if self._average_return(winner, data_bundle, [1, 3, 6]) > 0:
+        if self._average_return(winner, data_bundle, [1, 3, 6], as_of) > 0:
             return {winner: 1.0}, f"ADM selected positive momentum offensive asset {winner}."
         defensive = max(
             universe["defensive"],
-            key=lambda symbol: self._return(symbol, data_bundle, 1),
+            key=lambda symbol: self._return(symbol, data_bundle, 1, as_of),
         )
         return {defensive: 1.0}, f"ADM selected defensive asset {defensive}."
 
@@ -222,14 +235,16 @@ class SnowballStrategy(BaseStrategyPlugin):
         self,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
+        as_of: datetime,
     ) -> tuple[dict[str, float], str]:
         offensive = universe["offensive"][0]
         unemployment = self._macro_values(universe["macro"][0], data_bundle)
         recession = unemployment[-1] > sum(unemployment[-13:-1]) / 12
-        trend_ok = self._latest_close(offensive, data_bundle) > self._sma(
+        trend_ok = self._latest_close(offensive, data_bundle, as_of) > self._sma(
             offensive,
             data_bundle,
             10,
+            as_of,
         )
         if not recession or trend_ok:
             return {offensive: 1.0}, f"GTT-UE selected offensive asset {offensive}."
@@ -239,26 +254,29 @@ class SnowballStrategy(BaseStrategyPlugin):
         self,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
+        as_of: datetime,
     ) -> tuple[dict[str, float], str]:
         canary_scores = [
-            self._weighted_momentum(symbol, data_bundle, [1, 3, 6, 12])
+            self._weighted_momentum(symbol, data_bundle, [1, 3, 6, 12], as_of)
             for symbol in universe["canary"]
         ]
         if all(score >= 0 for score in canary_scores):
             winner = max(
                 universe["offensive"],
-                key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 12),
+                key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 12, as_of),
             )
             return {winner: 1.0}, f"BAA(A) selected offensive asset {winner}."
 
         ranked = sorted(
             universe["defensive"],
-            key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 12),
+            key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 12, as_of),
             reverse=True,
         )[:3]
         allocations: dict[str, float] = {}
         for symbol in ranked:
-            if self._latest_close(symbol, data_bundle) >= self._sma(symbol, data_bundle, 12):
+            if self._latest_close(symbol, data_bundle, as_of) >= self._sma(
+                symbol, data_bundle, 12, as_of
+            ):
                 target = symbol
             else:
                 target = universe["cash"][0]
@@ -291,8 +309,7 @@ class SnowballStrategy(BaseStrategyPlugin):
         return {
             strategy_id: {
                 role: [
-                    self._override_symbol(strategy_id, role, symbol, context)
-                    for symbol in symbols
+                    self._override_symbol(strategy_id, role, symbol, context) for symbol in symbols
                 ]
                 for role, symbols in spec.roles.items()
             }
@@ -322,46 +339,135 @@ class SnowballStrategy(BaseStrategyPlugin):
             return {symbol: weight / total for symbol, weight in allocations.items()}
         return allocations
 
-    def _average_return(self, symbol: str, data_bundle: DataBundle, months: list[int]) -> float:
-        return sum(self._return(symbol, data_bundle, month) for month in months) / len(months)
+    def _average_return(
+        self,
+        symbol: str,
+        data_bundle: DataBundle,
+        months: list[int],
+        as_of: datetime,
+    ) -> float:
+        return sum(self._return(symbol, data_bundle, month, as_of) for month in months) / len(
+            months
+        )
 
-    def _weighted_momentum(self, symbol: str, data_bundle: DataBundle, months: list[int]) -> float:
+    def _weighted_momentum(
+        self,
+        symbol: str,
+        data_bundle: DataBundle,
+        months: list[int],
+        as_of: datetime,
+    ) -> float:
         weights = [12 / month for month in months]
         weighted_returns = (
-            self._return(symbol, data_bundle, month) * weight
+            self._return(symbol, data_bundle, month, as_of) * weight
             for month, weight in zip(months, weights, strict=True)
         )
         return sum(weighted_returns) / sum(weights)
 
-    def _relative_to_sma(self, symbol: str, data_bundle: DataBundle, months: int) -> float:
-        return self._latest_close(symbol, data_bundle) / self._sma(symbol, data_bundle, months)
+    def _relative_to_sma(
+        self,
+        symbol: str,
+        data_bundle: DataBundle,
+        months: int,
+        as_of: datetime,
+    ) -> float:
+        return self._latest_close(symbol, data_bundle, as_of) / self._sma(
+            symbol,
+            data_bundle,
+            months,
+            as_of,
+        )
 
-    def _return(self, symbol: str, data_bundle: DataBundle, months: int) -> float:
-        closes = self._closes(symbol, data_bundle)
-        if len(closes) <= months:
-            raise ValueError(f"Not enough OHLCV bars for {symbol}: need {months + 1}")
-        previous = closes[-months - 1]
+    def _return(
+        self,
+        symbol: str,
+        data_bundle: DataBundle,
+        months: int,
+        as_of: datetime,
+    ) -> float:
+        cutoff = as_of.date()
+        _, latest = self._price_before(symbol, data_bundle, cutoff)
+        reference_cutoff = self._shift_months(cutoff, months)
+        _, previous = self._price_before(symbol, data_bundle, reference_cutoff)
         if previous <= 0:
             raise ValueError(f"Invalid historical close for {symbol}")
-        return closes[-1] / previous - 1.0
+        return latest / previous - 1.0
 
-    def _sma(self, symbol: str, data_bundle: DataBundle, months: int) -> float:
-        closes = self._closes(symbol, data_bundle)
-        if len(closes) < months:
-            raise ValueError(f"Not enough OHLCV bars for {symbol}: need {months}")
-        return sum(closes[-months:]) / months
+    def _sma(
+        self,
+        symbol: str,
+        data_bundle: DataBundle,
+        months: int,
+        as_of: datetime,
+    ) -> float:
+        endpoints = self._monthly_endpoint_closes(symbol, data_bundle, as_of)
+        if len(endpoints) < months:
+            raise ValueError(f"Not enough monthly OHLCV endpoints for {symbol}: need {months}")
+        window = endpoints[-months:]
+        return sum(window) / len(window)
 
-    def _latest_close(self, symbol: str, data_bundle: DataBundle) -> float:
-        return self._closes(symbol, data_bundle)[-1]
+    def _monthly_endpoint_closes(
+        self,
+        symbol: str,
+        data_bundle: DataBundle,
+        as_of: datetime,
+    ) -> list[float]:
+        cutoff = as_of.date()
+        cutoff_month = (cutoff.year, cutoff.month)
+        endpoints: dict[tuple[int, int], tuple[date, float]] = {}
+        for bar_date, close in self._price_bars(symbol, data_bundle):
+            month_key = (bar_date.year, bar_date.month)
+            if bar_date >= cutoff or month_key >= cutoff_month:
+                continue
+            current = endpoints.get(month_key)
+            if current is None or bar_date > current[0]:
+                endpoints[month_key] = (bar_date, close)
+        return [close for _, close in sorted(endpoints.values(), key=lambda item: item[0])]
 
-    def _closes(self, symbol: str, data_bundle: DataBundle) -> list[float]:
+    def _latest_close(self, symbol: str, data_bundle: DataBundle, as_of: datetime) -> float:
+        return self._price_before(symbol, data_bundle, as_of.date())[1]
+
+    def _price_before(
+        self,
+        symbol: str,
+        data_bundle: DataBundle,
+        cutoff: date,
+    ) -> tuple[date, float]:
+        eligible = [bar for bar in self._price_bars(symbol, data_bundle) if bar[0] < cutoff]
+        if not eligible:
+            raise ValueError(f"Not enough OHLCV bars for {symbol} before {cutoff.isoformat()}")
+        return eligible[-1]
+
+    def _price_bars(self, symbol: str, data_bundle: DataBundle) -> list[tuple[date, float]]:
         payload = data_bundle.data.get(symbol)
         if not isinstance(payload, dict):
             raise ValueError(f"Missing data for {symbol}")
         bars = payload.get("bars")
         if not isinstance(bars, list) or not bars:
             raise ValueError(f"Missing OHLCV bars for {symbol}")
-        return [float(bar["close"]) for bar in bars]
+        parsed = [(self._bar_date(bar), float(bar["close"])) for bar in bars]
+        return sorted(parsed, key=lambda item: item[0])
+
+    def _bar_date(self, bar: dict) -> date:
+        timestamp = bar.get("timestamp")
+        if isinstance(timestamp, datetime):
+            return timestamp.date()
+        if isinstance(timestamp, date):
+            return timestamp
+        if isinstance(timestamp, str):
+            value = timestamp.replace("Z", "+00:00")
+            try:
+                return datetime.fromisoformat(value).date()
+            except ValueError:
+                return date.fromisoformat(timestamp[:10])
+        raise ValueError("OHLCV bar is missing a timestamp")
+
+    def _shift_months(self, value: date, months: int) -> date:
+        month_index = value.month - months - 1
+        year = value.year + month_index // 12
+        month = month_index % 12 + 1
+        day = min(value.day, monthrange(year, month)[1])
+        return date(year, month, day)
 
     def _dividend_yield(self, symbol: str, data_bundle: DataBundle) -> float:
         payload = data_bundle.data.get(symbol)
@@ -391,10 +497,14 @@ class SnowballStrategy(BaseStrategyPlugin):
 
 class SnowballUSStrategy(SnowballStrategy):
     def manifest(self) -> StrategyManifest:
-        return super().manifest().model_copy(
-            update={
-                "strategy_id": "snowball_us",
-                "name": "Snowball US",
-                "description": "US-market Snowball dynamic asset allocation profile.",
-            }
+        return (
+            super()
+            .manifest()
+            .model_copy(
+                update={
+                    "strategy_id": "snowball_us",
+                    "name": "Snowball US",
+                    "description": "US-market Snowball dynamic asset allocation profile.",
+                }
+            )
         )
