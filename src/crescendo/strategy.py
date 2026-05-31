@@ -12,7 +12,7 @@ from maestro.sdk import (
     TargetAllocationResult,
 )
 
-STRATEGY_ID = "snowball"
+STRATEGY_ID = "crescendo"
 STRATEGY_VERSION = "0.1.0"
 CASH_SYMBOL = "CASH_USD"
 SELECTED_STRATEGIES = ["dga", "accelerated_dual_momentum", "gtt_ue", "baa_a"]
@@ -65,12 +65,12 @@ DEFAULT_SPECS = {
 MACRO_SYMBOLS = {"UNRATE", "T10Y3M"}
 
 
-class SnowballStrategy(BaseStrategyPlugin):
+class CrescendoStrategy(BaseStrategyPlugin):
     def manifest(self) -> StrategyManifest:
         return StrategyManifest(
             sdk_contract_version="1.1",
             strategy_id=STRATEGY_ID,
-            name="Snowball",
+            name="Crescendo",
             version=STRATEGY_VERSION,
             description="Dynamic asset allocation strategy collection for Maestro.",
             supported_modes=["paper", "live_approval"],
@@ -156,7 +156,7 @@ class SnowballStrategy(BaseStrategyPlugin):
             strategy_books=books,
             confidence=1.0,
             time_horizon="monthly",
-            rationale="Weighted Snowball dynamic asset allocation target.",
+            rationale="Weighted Crescendo dynamic asset allocation target.",
             metadata={
                 "selected_strategies": selected,
                 "ticker_overrides": context.config.get("ticker_overrides", {}),
@@ -179,7 +179,7 @@ class SnowballStrategy(BaseStrategyPlugin):
             return self._run_gtt_ue(universe, data_bundle, as_of)
         if strategy_id == "baa_a":
             return self._run_baa_a(universe, data_bundle, as_of)
-        raise ValueError(f"Unsupported Snowball strategy: {strategy_id}")
+        raise ValueError(f"Unsupported Crescendo strategy: {strategy_id}")
 
     def _run_dga(
         self,
@@ -288,7 +288,7 @@ class SnowballStrategy(BaseStrategyPlugin):
         output = [str(strategy_id) for strategy_id in selected]
         unknown = sorted(set(output) - set(DEFAULT_SPECS))
         if unknown:
-            raise ValueError(f"Unsupported Snowball strategies: {', '.join(unknown)}")
+            raise ValueError(f"Unsupported Crescendo strategies: {', '.join(unknown)}")
         return output
 
     def _strategy_weights(
@@ -302,7 +302,7 @@ class SnowballStrategy(BaseStrategyPlugin):
         weights = {strategy_id: float(configured.get(strategy_id, 0.0)) for strategy_id in selected}
         total = sum(weights.values())
         if total <= 0:
-            raise ValueError("Snowball strategy_weights must have a positive total")
+            raise ValueError("Crescendo strategy_weights must have a positive total")
         return {strategy_id: weight / total for strategy_id, weight in weights.items()}
 
     def _configured_universe(self, context: StrategyContext) -> dict[str, dict[str, list[str]]]:
@@ -495,16 +495,16 @@ class SnowballStrategy(BaseStrategyPlugin):
         return [float(observation["value"]) for observation in observations]
 
 
-class SnowballUSStrategy(SnowballStrategy):
+class CrescendoUSStrategy(CrescendoStrategy):
     def manifest(self) -> StrategyManifest:
         return (
             super()
             .manifest()
             .model_copy(
                 update={
-                    "strategy_id": "snowball_us",
-                    "name": "Snowball US",
-                    "description": "US-market Snowball dynamic asset allocation profile.",
+                    "strategy_id": "crescendo_us",
+                    "name": "Crescendo US",
+                    "description": "US-market Crescendo dynamic asset allocation profile.",
                 }
             )
         )

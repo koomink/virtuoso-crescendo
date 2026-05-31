@@ -4,16 +4,16 @@ from pathlib import Path
 import pytest
 from maestro.sdk import BaseStrategyPlugin, DataBundle, StrategyContext, TargetAllocationResult
 
-from snowball.strategy import SnowballStrategy
+from crescendo.strategy import CrescendoStrategy
 
 
-def test_snowball_strategy_contract_and_ticker_overrides():
-    strategy = SnowballStrategy()
+def test_crescendo_strategy_contract_and_ticker_overrides():
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime.now(UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={
             "selected_strategies": ["accelerated_dual_momentum"],
             "ticker_overrides": {
@@ -51,7 +51,7 @@ def test_snowball_strategy_contract_and_ticker_overrides():
     assert result.strategy_books[0].book_id == "accelerated_dual_momentum"
     assert result.strategy_books[0].allocations == {"QLD": 1.0}
 
-    source = (Path(__file__).parents[1] / "src" / "snowball" / "strategy.py").read_text()
+    source = (Path(__file__).parents[1] / "src" / "crescendo" / "strategy.py").read_text()
     assert "from maestro.sdk import" in source
     assert "maestro.portfolio" not in source
     assert "maestro.execution" not in source
@@ -59,13 +59,13 @@ def test_snowball_strategy_contract_and_ticker_overrides():
     assert "yfinance" not in source.lower()
 
 
-def test_snowball_requests_daily_ohlcv_for_price_based_strategies():
-    strategy = SnowballStrategy()
+def test_crescendo_requests_daily_ohlcv_for_price_based_strategies():
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime(2026, 5, 1, tzinfo=UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={},
     )
 
@@ -78,12 +78,12 @@ def test_snowball_requests_daily_ohlcv_for_price_based_strategies():
 
 
 def test_adm_uses_daily_prices_before_signal_date():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime(2026, 5, 1, tzinfo=UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={"selected_strategies": ["accelerated_dual_momentum"]},
     )
     data = {
@@ -125,7 +125,7 @@ def test_adm_uses_daily_prices_before_signal_date():
 
 
 def test_month_based_sma_uses_monthly_endpoints_before_signal_date():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     as_of = datetime(2026, 5, 1, tzinfo=UTC)
     bundle = result_data_bundle(
         {
@@ -149,7 +149,7 @@ def test_month_based_sma_uses_monthly_endpoints_before_signal_date():
 
 
 def test_month_based_sma_uses_last_available_close_when_month_end_is_closed():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     as_of = datetime(2026, 6, 1, tzinfo=UTC)
     bundle = result_data_bundle(
         {
@@ -169,12 +169,12 @@ def test_month_based_sma_uses_last_available_close_when_month_end_is_closed():
 
 
 def test_slot_override_takes_precedence_over_global_override():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime.now(UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={
             "selected_strategies": ["dga"],
             "ticker_overrides": {"QQQ": "QQQM"},
@@ -188,13 +188,13 @@ def test_slot_override_takes_precedence_over_global_override():
     assert "QQQM" not in {request.symbol for request in requests}
 
 
-def test_snowball_runs_four_default_strategies_with_books():
-    strategy = SnowballStrategy()
+def test_crescendo_runs_four_default_strategies_with_books():
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime.now(UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={},
     )
     requests = strategy.build_data_requests(context)
@@ -224,14 +224,14 @@ def test_snowball_runs_four_default_strategies_with_books():
     assert round(sum(book.target_weight for book in result.strategy_books), 10) == 1.0
 
 
-def test_snowball_can_emit_usd_sleeve_for_live_approval():
-    strategy = SnowballStrategy()
+def test_crescendo_can_emit_usd_sleeve_for_live_approval():
+    strategy = CrescendoStrategy()
     manifest = strategy.manifest()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime.now(UTC),
         run_mode="live_approval",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={
             "sleeve": "USD",
             "selected_strategies": ["accelerated_dual_momentum"],
@@ -261,13 +261,13 @@ def test_snowball_can_emit_usd_sleeve_for_live_approval():
 
 
 def test_dga_fundamental_request_uses_context_timestamp_as_of():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     timestamp = datetime(2026, 5, 1, tzinfo=UTC)
     context = StrategyContext(
         cycle_id="test",
         timestamp=timestamp,
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={"selected_strategies": ["dga"]},
     )
 
@@ -283,12 +283,12 @@ def test_dga_fundamental_request_uses_context_timestamp_as_of():
 
 
 def test_dga_fails_when_dividend_yield_metric_is_missing():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime.now(UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={"selected_strategies": ["dga"]},
     )
     data = {
@@ -315,12 +315,12 @@ def test_dga_fails_when_dividend_yield_metric_is_missing():
 
 
 def test_dga_treats_dividend_yield_above_one_as_percent_value():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime.now(UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={"selected_strategies": ["dga"]},
     )
     data = {
@@ -350,12 +350,12 @@ def test_dga_treats_dividend_yield_above_one_as_percent_value():
 
 
 def test_dga_defensive_ranking_uses_monthly_endpoint_average():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime(2026, 5, 1, tzinfo=UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={"selected_strategies": ["dga"]},
     )
     data = {
@@ -384,12 +384,12 @@ def test_dga_defensive_ranking_uses_monthly_endpoint_average():
 
 
 def test_gtt_ue_keeps_strict_unemployment_threshold_with_monthly_endpoint_trend():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime(2026, 5, 1, tzinfo=UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={"selected_strategies": ["gtt_ue"]},
     )
     data = {
@@ -411,12 +411,12 @@ def test_gtt_ue_keeps_strict_unemployment_threshold_with_monthly_endpoint_trend(
 
 
 def test_baa_offensive_ranking_uses_monthly_endpoint_average():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime(2026, 5, 1, tzinfo=UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={"selected_strategies": ["baa_a"]},
     )
     data = {
@@ -451,12 +451,12 @@ def test_baa_offensive_ranking_uses_monthly_endpoint_average():
 
 
 def test_baa_defensive_failed_sleeves_fall_back_to_bil_proxy():
-    strategy = SnowballStrategy()
+    strategy = CrescendoStrategy()
     context = StrategyContext(
         cycle_id="test",
         timestamp=datetime(2026, 5, 1, tzinfo=UTC),
         run_mode="paper",
-        strategy_id="snowball",
+        strategy_id="crescendo",
         config={"selected_strategies": ["baa_a"]},
     )
     data = {

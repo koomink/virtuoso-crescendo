@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "snowball"
+name = "virtuoso-crescendo"
 version = "0.1.0"
 description = "Dynamic asset allocation Virtuoso app for Maestro."
 readme = "README.md"

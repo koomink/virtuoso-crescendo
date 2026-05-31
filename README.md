@@ -1,6 +1,6 @@
-# Snowball
+# Crescendo
 
-Snowball is a Virtuoso app for Maestro. It implements a small set of dynamic
+Crescendo is a Virtuoso app for Maestro. It implements a small set of dynamic
 asset allocation strategies and emits a single Maestro `TargetAllocationResult`
 with strategy book metadata for per-strategy accounting.
 
@@ -11,13 +11,13 @@ Implemented strategies:
 - GTT-UE
 - BAA(A)
 
-Snowball does not fetch data directly, submit orders, manage portfolio state, or
+Crescendo does not fetch data directly, submit orders, manage portfolio state, or
 write dashboard state. Maestro owns DataHub, risk, order generation, execution,
 state, audit, and dashboard read models.
 
 ## Price Data Convention
 
-Snowball requests daily OHLCV bars for price-based strategy logic and only uses
+Crescendo requests daily OHLCV bars for price-based strategy logic and only uses
 bars strictly before the strategy context date. For example, a June 1 signal
 uses the previous trading day close as the latest price, not any June 1 bar.
 
@@ -25,7 +25,7 @@ Monthly moving-average and relative-strength checks in DGA, GTT-UE, and BAA(A)
 use monthly endpoint adjusted closes: each month contributes its last available
 trading close, and the strategy averages the most recent completed monthly
 endpoints before the context month. Point-to-point monthly returns use the
-latest available close before each calendar-month cutoff. Snowball keeps this
+latest available close before each calendar-month cutoff. Crescendo keeps this
 adjusted-close convention even when external references use raw closes.
 
 BAA(A) treats failed defensive sleeves as a short-duration Treasury proxy and
@@ -35,7 +35,7 @@ threshold: recession requires latest unemployment to be greater than the prior
 
 ## Ticker Overrides
 
-Default tickers come from `snowball72_strategy_info.md`. You can replace any
+Default tickers come from `crescendo72_strategy_info.md`. You can replace any
 individual ticker globally:
 
 ```yaml
@@ -63,11 +63,11 @@ The slot key format is `<strategy_id>.<role>.<default_ticker>`.
 
 ```yaml
 strategies:
-  - id: snowball
+  - id: crescendo
     enabled: true
     mode: paper
     weight: 1.0
-    entrypoint: "snowball.strategy:SnowballStrategy"
+    entrypoint: "crescendo.strategy:CrescendoStrategy"
     config:
       selected_strategies: [dga, accelerated_dual_momentum, gtt_ue, baa_a]
       strategy_weights:
@@ -79,5 +79,5 @@ strategies:
       slot_overrides: {}
 ```
 
-See `configs/snowball_us_etf_paper.example.yaml` for a complete USD paper
+See `configs/crescendo_us_etf_paper.example.yaml` for a complete USD paper
 configuration.

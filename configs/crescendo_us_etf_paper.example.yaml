@@ -191,11 +191,11 @@ universe:
       min_order_notional: 1
 
 strategies:
-  - id: snowball
+  - id: crescendo
     enabled: true
     mode: paper
     weight: 1.0
-    entrypoint: "snowball.strategy:SnowballStrategy"
+    entrypoint: "crescendo.strategy:CrescendoStrategy"
     config:
       selected_strategies: [dga, accelerated_dual_momentum, gtt_ue, baa_a]
       strategy_weights:
@@ -229,10 +229,10 @@ risk:
   min_cash_weight: 0.0
 
 state:
-  sqlite_path: var/snowball_us_etf_paper_state.db
+  sqlite_path: var/crescendo_us_etf_paper_state.db
 
 audit:
-  jsonl_path: var/snowball_us_etf_paper_audit.jsonl
+  jsonl_path: var/crescendo_us_etf_paper_audit.jsonl
 
 approval:
   enabled: false
