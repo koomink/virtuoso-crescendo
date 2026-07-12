@@ -492,6 +492,17 @@ class CrescendoStrategy(BaseStrategyPlugin):
         observations = payload.get("observations")
         if not isinstance(observations, list) or len(observations) < 13:
             raise ValueError(f"Not enough macro observations for {symbol}: need 13")
+        sort_keys = [
+            observation.get("date", observation.get("timestamp")) for observation in observations
+        ]
+        if any(key is not None for key in sort_keys):
+            observations = [
+                observation
+                for _, observation in sorted(
+                    zip(sort_keys, observations, strict=True),
+                    key=lambda pair: (pair[0] is None, pair[0]),
+                )
+            ]
         return [float(observation["value"]) for observation in observations]
 
 

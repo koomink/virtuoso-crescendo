@@ -410,6 +410,47 @@ def test_gtt_ue_keeps_strict_unemployment_threshold_with_monthly_endpoint_trend(
     assert result.allocations == {"SPY": 1.0}
 
 
+def test_gtt_ue_result_is_unaffected_by_macro_observation_input_order():
+    def _run(observations: list[dict]) -> dict:
+        strategy = CrescendoStrategy()
+        context = StrategyContext(
+            cycle_id="test",
+            timestamp=datetime(2026, 5, 1, tzinfo=UTC),
+            run_mode="paper",
+            strategy_id="crescendo",
+            config={"selected_strategies": ["gtt_ue"]},
+        )
+        data = {
+            "SPY": _monthly_symbol_data("SPY", [100] * 10 + [90]),
+            "UNRATE": {
+                "series_id": "UNRATE",
+                "observations": observations,
+                "source": "test",
+            },
+        }
+        result = strategy.run(
+            DataBundle(
+                requests=strategy.build_data_requests(context),
+                data=data,
+                generated_at=datetime(2026, 5, 1, tzinfo=UTC),
+                source="test",
+            ),
+            context,
+        )
+        return result.allocations
+
+    chronological_observations = [
+        {"date": f"2025-{index + 1:02d}-01", "value": 4.0, "source": "test"} for index in range(12)
+    ] + [{"date": "2026-01-01", "value": 5.0, "source": "test"}]
+    reversed_observations = list(reversed(chronological_observations))
+
+    forward_result = _run(chronological_observations)
+    reverse_result = _run(reversed_observations)
+
+    assert forward_result == reverse_result
+    assert forward_result == {"CASH_USD": 1.0}
+
+
 def test_baa_offensive_ranking_uses_monthly_endpoint_average():
     strategy = CrescendoStrategy()
     context = StrategyContext(
