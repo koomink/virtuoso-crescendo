@@ -124,6 +124,186 @@ def test_adm_uses_daily_prices_before_signal_date():
     assert result.allocations == {"SCZ": 1.0}
 
 
+def test_execution_override_maps_only_emitted_allocations_not_signals():
+    strategy = CrescendoStrategy()
+    context = StrategyContext(
+        cycle_id="test",
+        timestamp=datetime(2026, 5, 1, tzinfo=UTC),
+        run_mode="paper",
+        strategy_id="crescendo",
+        config={
+            "selected_strategies": ["accelerated_dual_momentum"],
+            "execution_overrides": {"accelerated_dual_momentum.offensive.SPY": "SSO"},
+        },
+    )
+    # Signal data only exists for SPY/SCZ: the winner must be picked from
+    # SPY prices while the emitted allocation is swapped to SSO.
+    data = {
+        "SPY": _dated_symbol_data(
+            "SPY",
+            [
+                ("2025-10-31", 100),
+                ("2026-01-30", 100),
+                ("2026-03-31", 100),
+                ("2026-04-30", 120),
+            ],
+        ),
+        "SCZ": _dated_symbol_data(
+            "SCZ",
+            [
+                ("2025-10-31", 100),
+                ("2026-01-30", 100),
+                ("2026-03-31", 100),
+                ("2026-04-30", 105),
+            ],
+        ),
+        "TLT": _dated_symbol_data("TLT", [("2026-03-31", 100), ("2026-04-30", 101)]),
+        "TIP": _dated_symbol_data("TIP", [("2026-03-31", 100), ("2026-04-30", 100)]),
+    }
+
+    requests = strategy.build_data_requests(context)
+    result = strategy.run(
+        DataBundle(
+            requests=requests,
+            data=data,
+            generated_at=datetime(2026, 5, 1, tzinfo=UTC),
+            source="test",
+        ),
+        context,
+    )
+
+    request_symbols = {request.symbol for request in requests}
+    assert "SSO" in request_symbols
+    assert "SPY" in request_symbols
+    sso_request = next(request for request in requests if request.symbol == "SSO")
+    assert sso_request.intended_use == "tradable"
+
+    assert result.allocations == {"SSO": 1.0}
+    book = result.strategy_books[0]
+    assert book.allocations == {"SSO": 1.0}
+    assert book.metadata["signal_allocations"] == {"SPY": 1.0}
+    assert "SPY" in book.rationale
+
+
+def test_execution_override_leaves_non_overridden_winner_untouched():
+    strategy = CrescendoStrategy()
+    context = StrategyContext(
+        cycle_id="test",
+        timestamp=datetime(2026, 5, 1, tzinfo=UTC),
+        run_mode="paper",
+        strategy_id="crescendo",
+        config={
+            "selected_strategies": ["accelerated_dual_momentum"],
+            "execution_overrides": {"accelerated_dual_momentum.offensive.SPY": "SSO"},
+        },
+    )
+    data = {
+        "SPY": _dated_symbol_data(
+            "SPY",
+            [
+                ("2025-10-31", 100),
+                ("2026-01-30", 100),
+                ("2026-03-31", 100),
+                ("2026-04-30", 105),
+            ],
+        ),
+        "SCZ": _dated_symbol_data(
+            "SCZ",
+            [
+                ("2025-10-31", 100),
+                ("2026-01-30", 100),
+                ("2026-03-31", 100),
+                ("2026-04-30", 120),
+            ],
+        ),
+        "TLT": _dated_symbol_data("TLT", [("2026-03-31", 100), ("2026-04-30", 101)]),
+        "TIP": _dated_symbol_data("TIP", [("2026-03-31", 100), ("2026-04-30", 100)]),
+    }
+
+    result = strategy.run(
+        DataBundle(
+            requests=strategy.build_data_requests(context),
+            data=data,
+            generated_at=datetime(2026, 5, 1, tzinfo=UTC),
+            source="test",
+        ),
+        context,
+    )
+
+    assert result.allocations == {"SCZ": 1.0}
+    assert "signal_allocations" not in result.strategy_books[0].metadata
+
+
+def test_books_carry_signal_evidence_and_state():
+    strategy = CrescendoStrategy()
+    context = StrategyContext(
+        cycle_id="test",
+        timestamp=datetime(2026, 5, 1, tzinfo=UTC),
+        run_mode="paper",
+        strategy_id="crescendo",
+        config={"selected_strategies": ["accelerated_dual_momentum"]},
+    )
+    data = {
+        "SPY": _dated_symbol_data(
+            "SPY",
+            [
+                ("2025-10-31", 100),
+                ("2026-01-30", 100),
+                ("2026-03-31", 100),
+                ("2026-04-30", 120),
+            ],
+        ),
+        "SCZ": _dated_symbol_data(
+            "SCZ",
+            [
+                ("2025-10-31", 100),
+                ("2026-01-30", 100),
+                ("2026-03-31", 100),
+                ("2026-04-30", 105),
+            ],
+        ),
+        "TLT": _dated_symbol_data("TLT", [("2026-03-31", 100), ("2026-04-30", 101)]),
+        "TIP": _dated_symbol_data("TIP", [("2026-03-31", 100), ("2026-04-30", 100)]),
+    }
+
+    result = strategy.run(
+        DataBundle(
+            requests=strategy.build_data_requests(context),
+            data=data,
+            generated_at=datetime(2026, 5, 1, tzinfo=UTC),
+            source="test",
+        ),
+        context,
+    )
+
+    book = result.strategy_books[0]
+    assert book.metadata["book_state"] == "risk_on"
+    evidence = book.metadata["signal_evidence"]
+    assert isinstance(evidence, list) and evidence
+    assert {"label", "detail", "status"} <= set(evidence[0])
+    statuses = {gate["status"] for gate in evidence}
+    assert statuses <= {"pass", "fail", "info"}
+    top_gate = next(gate for gate in evidence if gate["label"].startswith("top momentum"))
+    assert top_gate["status"] == "pass"
+
+
+def test_execution_override_rejects_unknown_slot():
+    strategy = CrescendoStrategy()
+    context = StrategyContext(
+        cycle_id="test",
+        timestamp=datetime(2026, 5, 1, tzinfo=UTC),
+        run_mode="paper",
+        strategy_id="crescendo",
+        config={
+            "selected_strategies": ["accelerated_dual_momentum"],
+            "execution_overrides": {"accelerated_dual_momentum.offensive.QQQ": "QLD"},
+        },
+    )
+
+    with pytest.raises(ValueError, match="Unknown execution_overrides slot"):
+        strategy.build_data_requests(context)
+
+
 def test_month_based_sma_uses_monthly_endpoints_before_signal_date():
     strategy = CrescendoStrategy()
     as_of = datetime(2026, 5, 1, tzinfo=UTC)

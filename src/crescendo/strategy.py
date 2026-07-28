@@ -110,6 +110,17 @@ class CrescendoStrategy(BaseStrategyPlugin):
                         fields=["dividend_yield"],
                         as_of=context.timestamp,
                     )
+            for execution_symbol in self._execution_map(
+                strategy_id, universe[strategy_id], context
+            ).values():
+                requests[(execution_symbol, "ohlcv")] = DataRequest(
+                    symbol=execution_symbol,
+                    asset_type="etf",
+                    data_type="ohlcv",
+                    intended_use="tradable",
+                    timeframe="1d",
+                    lookback=OHLCV_LOOKBACK_DAYS,
+                )
         return list(requests.values())
 
     def _data_type_for(self, strategy_id: str, role: str, index: int) -> str:
@@ -127,19 +138,29 @@ class CrescendoStrategy(BaseStrategyPlugin):
         combined: dict[str, float] = {}
 
         for strategy_id in selected:
-            allocations, rationale = self._run_sub_strategy(
+            signal_allocations, rationale, evidence = self._run_sub_strategy(
                 strategy_id,
                 universe[strategy_id],
                 data_bundle,
                 context.timestamp,
             )
+            execution_map = self._execution_map(strategy_id, universe[strategy_id], context)
+            allocations = self._apply_execution_map(signal_allocations, execution_map)
+            metadata: dict = {
+                "universe": universe[strategy_id],
+                "signal_evidence": evidence,
+                "book_state": self._book_state(signal_allocations, universe[strategy_id]),
+            }
+            if allocations != signal_allocations:
+                metadata["signal_allocations"] = signal_allocations
+                metadata["execution_map"] = execution_map
             book = StrategyBookAllocation(
                 book_id=strategy_id,
                 label=DEFAULT_SPECS[strategy_id].name,
                 target_weight=weights[strategy_id],
                 allocations=allocations,
                 rationale=rationale,
-                metadata={"universe": universe[strategy_id]},
+                metadata=metadata,
             )
             books.append(book)
             for symbol, allocation in allocations.items():
@@ -161,6 +182,7 @@ class CrescendoStrategy(BaseStrategyPlugin):
                 "selected_strategies": selected,
                 "ticker_overrides": context.config.get("ticker_overrides", {}),
                 "slot_overrides": context.config.get("slot_overrides", {}),
+                "execution_overrides": context.config.get("execution_overrides", {}),
             },
         )
 
@@ -170,7 +192,7 @@ class CrescendoStrategy(BaseStrategyPlugin):
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
         as_of: datetime,
-    ) -> tuple[dict[str, float], str]:
+    ) -> tuple[dict[str, float], str, list[dict]]:
         if strategy_id == "dga":
             return self._run_dga(universe, data_bundle, as_of)
         if strategy_id == "accelerated_dual_momentum":
@@ -181,107 +203,260 @@ class CrescendoStrategy(BaseStrategyPlugin):
             return self._run_baa_a(universe, data_bundle, as_of)
         raise ValueError(f"Unsupported Crescendo strategy: {strategy_id}")
 
+    def _book_state(
+        self,
+        signal_allocations: dict[str, float],
+        universe: dict[str, list[str]],
+    ) -> str:
+        offensive = set(universe.get("offensive", []))
+        symbols = set(signal_allocations)
+        if symbols & offensive:
+            return "risk_on"
+        if all(symbol.startswith("CASH") for symbol in symbols):
+            return "cash"
+        return "risk_off"
+
+    @staticmethod
+    def _gate(label: str, detail: str, status: str) -> dict:
+        return {"label": label, "detail": detail, "status": status}
+
     def _run_dga(
         self,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
         as_of: datetime,
-    ) -> tuple[dict[str, float], str]:
+    ) -> tuple[dict[str, float], str, list[dict]]:
         canary = universe["canary"][0]
         dividend_symbol, spread_symbol = universe["macro"]
-        risk_off = (
-            self._latest_close(canary, data_bundle, as_of)
-            < self._sma(canary, data_bundle, 12, as_of)
-            or self._dividend_yield(dividend_symbol, data_bundle) < 0.016
-            or self._latest_macro(spread_symbol, data_bundle) < -0.5
-        )
+        canary_close = self._latest_close(canary, data_bundle, as_of)
+        canary_sma = self._sma(canary, data_bundle, 12, as_of)
+        dividend_yield = self._dividend_yield(dividend_symbol, data_bundle)
+        spread = self._latest_macro(spread_symbol, data_bundle)
+        canary_ok = canary_close >= canary_sma
+        yield_ok = dividend_yield >= 0.016
+        spread_ok = spread >= -0.5
+        risk_off = not (canary_ok and yield_ok and spread_ok)
+        evidence = [
+            self._gate(
+                f"{canary} >= SMA12",
+                f"{canary_close:.2f} vs {canary_sma:.2f}",
+                "pass" if canary_ok else "fail",
+            ),
+            self._gate(
+                f"{dividend_symbol} dividend yield >= 1.6%",
+                f"{dividend_yield * 100:.2f}%",
+                "pass" if yield_ok else "fail",
+            ),
+            self._gate(
+                f"{spread_symbol} >= -0.5",
+                f"{spread:+.2f}",
+                "pass" if spread_ok else "fail",
+            ),
+        ]
         if not risk_off:
-            winner = max(
-                universe["offensive"],
-                key=lambda symbol: self._average_return(
-                    symbol, data_bundle, [1, 3, 6, 9, 12], as_of
-                ),
+            momentum = {
+                symbol: self._average_return(symbol, data_bundle, [1, 3, 6, 9, 12], as_of)
+                for symbol in universe["offensive"]
+            }
+            winner = max(momentum, key=momentum.get)
+            evidence.append(
+                self._gate(
+                    "offensive momentum [1,3,6,9,12M]",
+                    " > ".join(
+                        f"{symbol} {value * 100:+.1f}%"
+                        for symbol, value in sorted(
+                            momentum.items(), key=lambda item: item[1], reverse=True
+                        )
+                    ),
+                    "info",
+                )
             )
-            return {winner: 1.0}, f"DGA selected offensive asset {winner}."
-        defensive = max(
-            universe["defensive"],
-            key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 6, as_of),
+            return {winner: 1.0}, f"DGA selected offensive asset {winner}.", evidence
+        rankings = {
+            symbol: self._relative_to_sma(symbol, data_bundle, 6, as_of)
+            for symbol in universe["defensive"]
+        }
+        defensive = max(rankings, key=rankings.get)
+        evidence.append(
+            self._gate(
+                "defensive rank (close/SMA6)",
+                " > ".join(
+                    f"{symbol} {value:.3f}"
+                    for symbol, value in sorted(
+                        rankings.items(), key=lambda item: item[1], reverse=True
+                    )
+                ),
+                "info",
+            )
         )
-        if self._latest_close(defensive, data_bundle, as_of) < self._sma(
-            defensive, data_bundle, 6, as_of
-        ):
-            return {universe["cash"][0]: 1.0}, "DGA risk-off signal selected cash."
-        return {defensive: 1.0}, f"DGA risk-off signal selected defensive asset {defensive}."
+        defensive_close = self._latest_close(defensive, data_bundle, as_of)
+        defensive_sma = self._sma(defensive, data_bundle, 6, as_of)
+        defensive_ok = defensive_close >= defensive_sma
+        evidence.append(
+            self._gate(
+                f"{defensive} >= SMA6",
+                f"{defensive_close:.2f} vs {defensive_sma:.2f}",
+                "pass" if defensive_ok else "fail",
+            )
+        )
+        if not defensive_ok:
+            return {universe["cash"][0]: 1.0}, "DGA risk-off signal selected cash.", evidence
+        return (
+            {defensive: 1.0},
+            f"DGA risk-off signal selected defensive asset {defensive}.",
+            evidence,
+        )
 
     def _run_adm(
         self,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
         as_of: datetime,
-    ) -> tuple[dict[str, float], str]:
-        winner = max(
-            universe["offensive"],
-            key=lambda symbol: self._average_return(symbol, data_bundle, [1, 3, 6], as_of),
+    ) -> tuple[dict[str, float], str, list[dict]]:
+        momentum = {
+            symbol: self._average_return(symbol, data_bundle, [1, 3, 6], as_of)
+            for symbol in universe["offensive"]
+        }
+        winner = max(momentum, key=momentum.get)
+        winner_positive = momentum[winner] > 0
+        evidence = [
+            self._gate(
+                "offensive momentum [1,3,6M]",
+                " > ".join(
+                    f"{symbol} {value * 100:+.1f}%"
+                    for symbol, value in sorted(
+                        momentum.items(), key=lambda item: item[1], reverse=True
+                    )
+                ),
+                "info",
+            ),
+            self._gate(
+                f"top momentum ({winner}) > 0",
+                f"{momentum[winner] * 100:+.1f}%",
+                "pass" if winner_positive else "fail",
+            ),
+        ]
+        if winner_positive:
+            return (
+                {winner: 1.0},
+                f"ADM selected positive momentum offensive asset {winner}.",
+                evidence,
+            )
+        returns = {
+            symbol: self._return(symbol, data_bundle, 1, as_of)
+            for symbol in universe["defensive"]
+        }
+        defensive = max(returns, key=returns.get)
+        evidence.append(
+            self._gate(
+                "defensive rank (1M return)",
+                " > ".join(
+                    f"{symbol} {value * 100:+.1f}%"
+                    for symbol, value in sorted(
+                        returns.items(), key=lambda item: item[1], reverse=True
+                    )
+                ),
+                "info",
+            )
         )
-        if self._average_return(winner, data_bundle, [1, 3, 6], as_of) > 0:
-            return {winner: 1.0}, f"ADM selected positive momentum offensive asset {winner}."
-        defensive = max(
-            universe["defensive"],
-            key=lambda symbol: self._return(symbol, data_bundle, 1, as_of),
-        )
-        return {defensive: 1.0}, f"ADM selected defensive asset {defensive}."
+        return {defensive: 1.0}, f"ADM selected defensive asset {defensive}.", evidence
 
     def _run_gtt_ue(
         self,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
         as_of: datetime,
-    ) -> tuple[dict[str, float], str]:
+    ) -> tuple[dict[str, float], str, list[dict]]:
         offensive = universe["offensive"][0]
         unemployment = self._macro_values(universe["macro"][0], data_bundle)
-        recession = unemployment[-1] > sum(unemployment[-13:-1]) / 12
-        trend_ok = self._latest_close(offensive, data_bundle, as_of) > self._sma(
-            offensive,
-            data_bundle,
-            10,
-            as_of,
-        )
+        unemployment_avg = sum(unemployment[-13:-1]) / 12
+        recession = unemployment[-1] > unemployment_avg
+        offensive_close = self._latest_close(offensive, data_bundle, as_of)
+        offensive_sma = self._sma(offensive, data_bundle, 10, as_of)
+        trend_ok = offensive_close > offensive_sma
+        evidence = [
+            self._gate(
+                f"{universe['macro'][0]} <= 12M avg",
+                f"{unemployment[-1]:.1f} vs {unemployment_avg:.2f}",
+                "fail" if recession else "pass",
+            ),
+            self._gate(
+                f"{offensive} > SMA10",
+                f"{offensive_close:.2f} vs {offensive_sma:.2f}",
+                "pass" if trend_ok else "fail",
+            ),
+        ]
         if not recession or trend_ok:
-            return {offensive: 1.0}, f"GTT-UE selected offensive asset {offensive}."
-        return {universe["cash"][0]: 1.0}, "GTT-UE recession and trend signal selected cash."
+            return {offensive: 1.0}, f"GTT-UE selected offensive asset {offensive}.", evidence
+        return (
+            {universe["cash"][0]: 1.0},
+            "GTT-UE recession and trend signal selected cash.",
+            evidence,
+        )
 
     def _run_baa_a(
         self,
         universe: dict[str, list[str]],
         data_bundle: DataBundle,
         as_of: datetime,
-    ) -> tuple[dict[str, float], str]:
-        canary_scores = [
-            self._weighted_momentum(symbol, data_bundle, [1, 3, 6, 12], as_of)
+    ) -> tuple[dict[str, float], str, list[dict]]:
+        canary_scores = {
+            symbol: self._weighted_momentum(symbol, data_bundle, [1, 3, 6, 12], as_of)
             for symbol in universe["canary"]
-        ]
-        if all(score >= 0 for score in canary_scores):
-            winner = max(
-                universe["offensive"],
-                key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 12, as_of),
+        }
+        all_positive = all(score >= 0 for score in canary_scores.values())
+        evidence = [
+            self._gate(
+                "canary momentum 13612W >= 0",
+                " · ".join(
+                    f"{symbol} {value * 100:+.1f}%" for symbol, value in canary_scores.items()
+                ),
+                "pass" if all_positive else "fail",
             )
-            return {winner: 1.0}, f"BAA(A) selected offensive asset {winner}."
+        ]
+        if all_positive:
+            rankings = {
+                symbol: self._relative_to_sma(symbol, data_bundle, 12, as_of)
+                for symbol in universe["offensive"]
+            }
+            winner = max(rankings, key=rankings.get)
+            evidence.append(
+                self._gate(
+                    "offensive rank (close/SMA12)",
+                    " > ".join(
+                        f"{symbol} {value:.3f}"
+                        for symbol, value in sorted(
+                            rankings.items(), key=lambda item: item[1], reverse=True
+                        )
+                    ),
+                    "info",
+                )
+            )
+            return {winner: 1.0}, f"BAA(A) selected offensive asset {winner}.", evidence
 
-        ranked = sorted(
-            universe["defensive"],
-            key=lambda symbol: self._relative_to_sma(symbol, data_bundle, 12, as_of),
-            reverse=True,
-        )[:3]
+        rankings = {
+            symbol: self._relative_to_sma(symbol, data_bundle, 12, as_of)
+            for symbol in universe["defensive"]
+        }
+        ranked = sorted(rankings, key=rankings.get, reverse=True)[:3]
+        evidence.append(
+            self._gate(
+                "defensive top3 (close/SMA12)",
+                " > ".join(f"{symbol} {rankings[symbol]:.3f}" for symbol in ranked),
+                "info",
+            )
+        )
         allocations: dict[str, float] = {}
+        decisions: list[str] = []
         for symbol in ranked:
-            if self._latest_close(symbol, data_bundle, as_of) >= self._sma(
+            above_sma = self._latest_close(symbol, data_bundle, as_of) >= self._sma(
                 symbol, data_bundle, 12, as_of
-            ):
-                target = symbol
-            else:
-                target = universe["cash"][0]
+            )
+            target = symbol if above_sma else universe["cash"][0]
+            decisions.append(f"{symbol} -> {target}")
             allocations[target] = allocations.get(target, 0.0) + (1.0 / 3.0)
-        return allocations, "BAA(A) selected defensive allocation."
+        evidence.append(self._gate("sleeve >= SMA12 else cash", " · ".join(decisions), "info"))
+        return allocations, "BAA(A) selected defensive allocation.", evidence
 
     def _selected_strategies(self, context: StrategyContext) -> list[str]:
         selected = context.config.get("selected_strategies", SELECTED_STRATEGIES)
@@ -327,6 +502,50 @@ class CrescendoStrategy(BaseStrategyPlugin):
         ticker_overrides = context.config.get("ticker_overrides", {})
         slot_key = f"{strategy_id}.{role}.{symbol}"
         return str(slot_overrides.get(slot_key, ticker_overrides.get(symbol, symbol)))
+
+    def _execution_map(
+        self,
+        strategy_id: str,
+        universe: dict[str, list[str]],
+        context: StrategyContext,
+    ) -> dict[str, str]:
+        """Signal symbol -> execution symbol map for one book.
+
+        Keys in `execution_overrides` config use the slot form
+        "{strategy_id}.{role}.{signal_symbol}" (the signal symbol as it appears
+        in the configured universe). Signals keep running on the signal symbol;
+        only emitted allocations are swapped to the execution symbol.
+        """
+        overrides = context.config.get("execution_overrides", {})
+        mapping: dict[str, str] = {}
+        for slot_key, execution_symbol in overrides.items():
+            parts = str(slot_key).split(".")
+            if len(parts) != 3:
+                raise ValueError(
+                    f"execution_overrides key must be 'strategy.role.symbol': {slot_key}"
+                )
+            slot_strategy, role, signal_symbol = parts
+            if slot_strategy not in DEFAULT_SPECS:
+                raise ValueError(f"Unknown execution_overrides strategy: {slot_key}")
+            if slot_strategy != strategy_id:
+                continue
+            if role not in universe or signal_symbol not in universe[role]:
+                raise ValueError(f"Unknown execution_overrides slot: {slot_key}")
+            mapping[signal_symbol] = str(execution_symbol)
+        return mapping
+
+    def _apply_execution_map(
+        self,
+        allocations: dict[str, float],
+        execution_map: dict[str, str],
+    ) -> dict[str, float]:
+        if not execution_map:
+            return allocations
+        mapped: dict[str, float] = {}
+        for symbol, weight in allocations.items():
+            execution_symbol = execution_map.get(symbol, symbol)
+            mapped[execution_symbol] = mapped.get(execution_symbol, 0.0) + weight
+        return mapped
 
     def _cash_symbol(self, context: StrategyContext) -> str:
         return str(context.config.get("cash_symbol", CASH_SYMBOL))
