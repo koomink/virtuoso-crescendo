@@ -26,7 +26,6 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from leverage_comparison import (  # noqa: E402
-    BOOKS,
     Market,
     backtest_book,
     metrics,
@@ -143,7 +142,10 @@ def main() -> None:
         "schema_version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
         "data_through": end.isoformat(),
-        "note": "Simulated monthly-rebalance backtest with live execution_overrides applied; dividends reinvested; costs excluded.",
+        "note": (
+            "Simulated monthly-rebalance backtest with live execution_overrides applied; "
+            "dividends reinvested; costs excluded."
+        ),
         "warnings": warnings,
         "books": books,
         "combined": combined,
