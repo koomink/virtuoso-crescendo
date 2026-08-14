@@ -7,9 +7,9 @@ cache consumed by the Maestro dashboard (Virtuoso tab, Strategy Books panel).
 
 Usage:
     python generate_book_performance.py \
-        --signal-config /root/maestro-operator/symphony_signal.yaml \
-        --data-dir /root/maestro-operator/var/backtest_data \
-        --output /root/maestro-operator/var/book_performance.json
+        --signal-config /home/symphony/maestro-operator/symphony_signal.yaml \
+        --data-dir /home/symphony/maestro-operator/var/backtest_data \
+        --output /home/symphony/maestro-operator/var/book_performance.json
 
 Data fetch failures fall back to the existing cache in --data-dir so a
 transient network problem degrades to slightly stale curves instead of a

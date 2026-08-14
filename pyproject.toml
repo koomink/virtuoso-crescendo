@@ -16,7 +16,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = [
     "src",
-    "../../Maestro/src",
+    "../../maestro/src",
 ]
 
 [tool.ruff]
